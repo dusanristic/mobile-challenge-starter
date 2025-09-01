@@ -1,68 +1,134 @@
-import { generateAPIUrl } from "@/utils";
-import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
-import { fetch as expoFetch } from "expo/fetch";
-import { useState } from "react";
-import { View, TextInput, ScrollView, Text, SafeAreaView } from "react-native";
+import { EmptyState } from "@/components/Chat/EmptyState";
+import { ScrollToBottomButton } from "@/components/Chat/ScrollToBottomButton";
+import { ErrorMessageComponent } from "@/components/Global/ErrorMessageComponent";
+import { Header } from "@/components/Header";
+import { CopyNotification } from "@/components/Messages/CopyNotification";
+import { MessageBubble } from "@/components/Messages/MessageBubble";
+import { MessageComposer } from "@/components/Messages/MessageComposer";
+import { useChat } from "@/hooks/Chat/useChat";
+import { useThemeColor } from "@/hooks/useThemeColor";
+import { MessageActionsType } from "@/types/chat";
+import * as Haptics from "expo-haptics";
+import React, { useRef, useState } from "react";
+import {
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StyleSheet,
+} from "react-native";
 
 export default function App() {
   const [input, setInput] = useState("");
-  const { messages, error, sendMessage } = useChat({
-    transport: new DefaultChatTransport({
-      fetch: expoFetch as unknown as typeof globalThis.fetch,
-      api: generateAPIUrl("/api/chat"),
-    }),
-    onError: (error) => console.error(error, "ERROR"),
-  });
+  const [showCopyNotification, setShowCopyNotification] = useState(false);
+  const inputRef = useRef<any>(null);
 
-  if (error) return <Text>{error.message}</Text>;
+  const {
+    localMessages,
+    isTyping,
+    showScrollButton,
+    scrollViewRef,
+    error,
+    handleSendMessage,
+    scrollToBottom,
+    handleScroll,
+    updateMessageFeedback,
+  } = useChat();
+
+  const backgroundColor = useThemeColor({}, "background");
+
+  const messageActions: MessageActionsType = {
+    onCopy: async (_: string) => {
+      setShowCopyNotification(true);
+    },
+    onLike: (messageId: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const message = localMessages.find((m) => m.id === messageId);
+      const newFeedback = message?.feedback === "liked" ? null : "liked";
+      updateMessageFeedback(messageId, newFeedback);
+    },
+    onDislike: (messageId: string) => {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      const message = localMessages.find((m) => m.id === messageId);
+      const newFeedback = message?.feedback === "disliked" ? null : "disliked";
+      updateMessageFeedback(messageId, newFeedback);
+    },
+  };
+
+  const handleSend = () => {
+    handleSendMessage(input);
+    setInput("");
+  };
+
+  const handleSuggestionPress = (suggestion: string) => {
+    setInput(suggestion);
+    inputRef.current?.focus();
+  };
+
+  if (error) {
+    return (
+      <SafeAreaView style={{ flex: 1, backgroundColor }}>
+        <ErrorMessageComponent message={error.message || "An error occurred"} />
+      </SafeAreaView>
+    );
+  }
 
   return (
-    <SafeAreaView style={{ height: "100%" }}>
-      <View
-        style={{
-          height: "95%",
-          display: "flex",
-          flexDirection: "column",
-          paddingHorizontal: 8,
-        }}
+    <SafeAreaView style={{ flex: 1, backgroundColor }}>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === "ios" ? "padding" : "height"}
       >
-        <ScrollView style={{ flex: 1 }}>
-          {messages.map((m) => (
-            <View key={m.id} style={{ marginVertical: 8 }}>
-              <View>
-                <Text style={{ fontWeight: 700 }}>{m.role}</Text>
-                {m.parts.map((part, i) => {
-                  switch (part.type) {
-                    case "text":
-                      return <Text key={`${m.id}-${i}`}>{part.text}</Text>;
-                    case "tool-weather":
-                      return (
-                        <Text key={`${m.id}-${i}`}>
-                          {JSON.stringify(part, null, 2)}
-                        </Text>
-                      );
-                  }
-                })}
-              </View>
-            </View>
-          ))}
+        <Header />
+
+        {/* Copy Notification */}
+        <CopyNotification
+          visible={showCopyNotification}
+          onHide={() => setShowCopyNotification(false)}
+        />
+
+        {/* Messages */}
+        <ScrollView
+          ref={scrollViewRef}
+          style={{ flex: 1 }}
+          contentContainerStyle={styles.contentContainer}
+          showsVerticalScrollIndicator={false}
+          onScroll={handleScroll}
+          scrollEventThrottle={16}
+        >
+          {localMessages.length === 0 ? (
+            <EmptyState onSuggestionPress={handleSuggestionPress} />
+          ) : (
+            localMessages.map((message, index) => (
+              <MessageBubble
+                key={message.id}
+                message={message}
+                actions={messageActions}
+              />
+            ))
+          )}
         </ScrollView>
-        <View style={{ marginTop: 8 }}>
-          <TextInput
-            style={{ backgroundColor: "white", padding: 8 }}
-            placeholder="Say something..."
-            value={input}
-            onChange={(e) => setInput(e.nativeEvent.text)}
-            onSubmitEditing={(e) => {
-              e.preventDefault();
-              sendMessage({ text: input });
-              setInput("");
-            }}
-            autoFocus={true}
-          />
-        </View>
-      </View>
+
+        <ScrollToBottomButton
+          visible={showScrollButton && localMessages.length > 0}
+          onPress={scrollToBottom}
+        />
+
+        <MessageComposer
+          input={input}
+          setInput={setInput}
+          onSendMessage={handleSend}
+          isTyping={isTyping}
+        />
+      </KeyboardAvoidingView>
     </SafeAreaView>
   );
 }
+
+const styles = StyleSheet.create({
+  contentContainer: {
+    paddingVertical: 16,
+    paddingBottom: 16,
+    flexGrow: 1,
+  },
+});
